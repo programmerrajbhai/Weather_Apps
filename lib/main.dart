@@ -3,8 +3,40 @@ import 'dart:convert';
 import "package:http/http.dart" as http;
 import 'package:geolocator/geolocator.dart';
 import 'package:geocoding/geocoding.dart';
+import 'package:flutter_local_notifications/flutter_local_notifications.dart';
+
+// নোটিফিকেশন সেটআপ
+final FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin = FlutterLocalNotificationsPlugin();
+
+void initializeNotifications() async {
+  const AndroidInitializationSettings initializationSettingsAndroid =
+  AndroidInitializationSettings('@mipmap/ic_launcher');
+
+  const InitializationSettings initializationSettings =
+  InitializationSettings(android: initializationSettingsAndroid);
+
+  await flutterLocalNotificationsPlugin.initialize(initializationSettings);
+}
+
+Future<void> showNotification(String title, String body) async {
+  const AndroidNotificationDetails androidPlatformChannelSpecifics =
+  AndroidNotificationDetails(
+    'weather_channel_id',
+    'Weather Notifications',
+    importance: Importance.high,
+    priority: Priority.high,
+  );
+
+  const NotificationDetails platformChannelSpecifics =
+  NotificationDetails(android: androidPlatformChannelSpecifics);
+
+  await flutterLocalNotificationsPlugin.show(
+      0, title, body, platformChannelSpecifics);
+}
 
 void main() {
+  WidgetsFlutterBinding.ensureInitialized();
+  initializeNotifications();
   runApp(const WeatherApp());
 }
 
@@ -36,11 +68,12 @@ class _WeatherScreenState extends State<WeatherScreen> {
   String temperature = "";
   String weather = "Unknown";
   String cityName = "Fetching...";
+  String lastWeather = "";
   bool isLoading = false;
   double? latitude;
   double? longitude;
 
-  // লোকেশন পারমিশন চেক ও GPS থেকে লোকেশন বের করা
+  // ✅ GPS লোকেশন বের করা
   Future<Position?> _getCurrentLocation() async {
     bool serviceEnabled;
     LocationPermission permission;
@@ -56,7 +89,6 @@ class _WeatherScreenState extends State<WeatherScreen> {
       if (permission == LocationPermission.deniedForever) {
         return null;
       }
-
       if (permission == LocationPermission.denied) {
         return null;
       }
@@ -66,7 +98,7 @@ class _WeatherScreenState extends State<WeatherScreen> {
         desiredAccuracy: LocationAccuracy.high);
   }
 
-  // Geocoding API দিয়ে **শহরের নাম বের করা**
+  // ✅ শহরের নাম বের করা
   Future<void> getCityName(double lat, double lon) async {
     try {
       List<Placemark> placemarks = await placemarkFromCoordinates(lat, lon);
@@ -82,7 +114,7 @@ class _WeatherScreenState extends State<WeatherScreen> {
     }
   }
 
-  // Weather Fetch করার ফাংশন
+  // ✅ বর্তমান আবহাওয়া আনতে
   Future<void> fetchWeather() async {
     setState(() {
       isLoading = true;
@@ -93,36 +125,33 @@ class _WeatherScreenState extends State<WeatherScreen> {
       latitude = position.latitude;
       longitude = position.longitude;
 
-      // শহরের নাম বের করা
       await getCityName(latitude!, longitude!);
 
-      final url =
+      final currentWeatherUrl =
           "https://api.openweathermap.org/data/2.5/weather?lat=$latitude&lon=$longitude&appid=$apiKey&units=metric";
 
-      final response = await http.get(Uri.parse(url));
+      final currentResponse = await http.get(Uri.parse(currentWeatherUrl));
 
-      if (response.statusCode == 200) {
-        final data = json.decode(response.body);
+      if (currentResponse.statusCode == 200) {
+        final data = json.decode(currentResponse.body);
+        String newWeather = data['weather'][0]['description'];
+
         setState(() {
           temperature = "${data['main']['temp']}°C";
-          weather = data['weather'][0]['description'];
-          isLoading = false;
+          weather = newWeather;
         });
-      } else {
-        setState(() {
-          temperature = "Error fetching data";
-          weather = "Unknown";
-          isLoading = false;
-        });
+
+        if (lastWeather != "" && lastWeather != newWeather) {
+          await showNotification("আবহাওয়া পরিবর্তিত হয়েছে!", "নতুন আবহাওয়া: $newWeather");
+        }
+
+        lastWeather = newWeather;
       }
-    } else {
-      setState(() {
-        temperature = "Location Error";
-        weather = "Unknown";
-        cityName = "Unknown";
-        isLoading = false;
-      });
     }
+
+    setState(() {
+      isLoading = false;
+    });
   }
 
   @override
@@ -143,35 +172,10 @@ class _WeatherScreenState extends State<WeatherScreen> {
             : Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Text(
-              cityName == "Unknown"
-                  ? "City: Not Found"
-                  : "📍 City: $cityName",
-              style: const TextStyle(
-                fontSize: 26,
-                fontWeight: FontWeight.bold,
-                color: Colors.blueAccent,
-              ),
-              textAlign: TextAlign.center,
-            ),
+            Text("📍 City: $cityName", style: const TextStyle(fontSize: 26, fontWeight: FontWeight.bold)),
             const SizedBox(height: 10),
-            Text(
-              latitude != null && longitude != null
-                  ? "Lat: $latitude, Lon: $longitude"
-                  : "Location not available",
-              style: const TextStyle(
-                  fontSize: 16, fontWeight: FontWeight.bold),
-            ),
-            const SizedBox(height: 10),
-            Text(
-              "🌡 Temperature: $temperature",
-              style: const TextStyle(fontSize: 22),
-            ),
-            const SizedBox(height: 10),
-            Text(
-              "🌤 Weather: $weather",
-              style: const TextStyle(fontSize: 20),
-            ),
+            Text("🌡 এখনকার তাপমাত্রা: $temperature", style: const TextStyle(fontSize: 22)),
+            Text("🌤 এখনকার আবহাওয়া: $weather", style: const TextStyle(fontSize: 20)),
             const SizedBox(height: 20),
             ElevatedButton(
               onPressed: fetchWeather,
